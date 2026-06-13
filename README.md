@@ -106,7 +106,21 @@ com.jackchen.TouchBarCodexToken.CodexLauncher.plist
 
 它每 5 秒检查一次 Codex 是否正在运行。如果 Codex 已启动而额度条未运行，就自动打开 `TouchBarCodexToken.app`。如果你在 Codex 仍运行时手动退出额度条，本轮 Codex 会话内不会被自动拉起；Codex 完全退出后会清除这个手动退出状态。
 
-### 方式二：开发期直接运行
+### 方式二：打包 DMG
+
+```bash
+scripts/package-dmg.sh
+```
+
+打包成功后会生成：
+
+```text
+dist/TouchBarCodexToken-0.1.3.dmg
+```
+
+分享给其他人时，推荐上传这个 DMG 到 GitHub Releases。当前项目没有 Apple Developer 签名和公证，首次打开时 macOS 可能提示无法验证开发者；用户可以在 Finder 中右键点击 app，选择“打开”，再确认一次。
+
+### 方式三：开发期直接运行
 
 ```bash
 swift run
@@ -146,6 +160,7 @@ scripts/make-app-icon.py
 ### 开发中
 
 - 新增 LaunchAgent 启动器，首次运行后可在 Codex 启动时自动打开额度条。
+- 新增 `scripts/package-dmg.sh`，可生成用于分享安装的 DMG。
 
 ### 0.1.2
 
