@@ -39,11 +39,7 @@ struct LimitMeter: Equatable {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = .current
 
-        if Calendar.current.isDateInToday(resetDate) {
-            formatter.dateFormat = "HH:mm"
-        } else {
-            formatter.dateFormat = "E HH:mm"
-        }
+        formatter.dateFormat = "M月d日 HH:mm"
 
         return "\(formatter.string(from: resetDate)) 重置"
     }

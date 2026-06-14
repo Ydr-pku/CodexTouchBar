@@ -8,9 +8,11 @@ final class RateLimitStore {
     weak var delegate: RateLimitStoreDelegate?
 
     private let client = CodexAppServerClient()
+    private let tokenUsageQueue = DispatchQueue(label: "TouchBarCodexToken.LocalTokenUsageReader", qos: .utility)
     private var timer: Timer?
     private var state = RateLimitDisplayState.initial
     private var refreshInFlight = false
+    private var tokenUsageInFlight = false
     private var isStarted = false
 
     func start() {
@@ -42,6 +44,7 @@ final class RateLimitStore {
     func stop() {
         isStarted = false
         refreshInFlight = false
+        tokenUsageInFlight = false
         timer?.invalidate()
         timer = nil
         client.stop()
@@ -88,11 +91,11 @@ final class RateLimitStore {
 
         state.fiveHour = windows.fiveHour
         state.weekly = windows.weekly
-        state.tokenUsage = LocalTokenUsageReader.read()
         state.isRefreshing = false
         state.lastUpdated = Date()
         state.errorMessage = nil
         publish()
+        refreshTokenUsage()
     }
 
     private func classifyWindows(primary: RateLimitWindow?, secondary: RateLimitWindow?) -> (fiveHour: LimitMeter?, weekly: LimitMeter?) {
@@ -131,5 +134,30 @@ final class RateLimitStore {
 
     private func publish() {
         delegate?.rateLimitStore(self, didUpdate: state)
+    }
+
+    private func refreshTokenUsage() {
+        guard !tokenUsageInFlight else {
+            return
+        }
+
+        tokenUsageInFlight = true
+        tokenUsageQueue.async { [weak self] in
+            let tokenUsage = LocalTokenUsageReader.read()
+
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                self.tokenUsageInFlight = false
+                guard self.isStarted else {
+                    return
+                }
+
+                self.state.tokenUsage = tokenUsage
+                self.publish()
+            }
+        }
     }
 }
