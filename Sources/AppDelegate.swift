@@ -1,7 +1,7 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: 118)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let store = RateLimitStore()
     private let lifecycleMonitor = CodexLifecycleMonitor()
     private var hudAppearance = HUDAppearance.load()
@@ -52,9 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
             return
         }
 
-        button.image = NSImage(systemSymbolName: "bolt.horizontal.circle.fill", accessibilityDescription: "Codex")
-        button.imagePosition = .imageLeft
-        button.title = " --"
+        button.image = nil
+        button.title = "--"
         button.toolTip = "Codex 额度"
 
         statusItem.menu = makeStatusMenu()
@@ -148,14 +147,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
             return
         }
 
-        if let fiveHour = state.fiveHour, let weekly = state.weekly {
-            button.title = " \(fiveHour.shortTitle) \(fiveHour.remainingText)  \(weekly.shortTitle) \(weekly.remainingText)"
-            button.toolTip = "Codex 额度：5 小时剩余 \(fiveHour.remainingText)，周限额剩余 \(weekly.remainingText)"
+        if let meter = state.weekly ?? state.fiveHour {
+            button.title = meter.remainingText
+            button.toolTip = "Codex 额度剩余 \(meter.remainingText)"
         } else if state.isRefreshing {
-            button.title = " ..."
+            button.title = "..."
             button.toolTip = "Codex 额度：正在刷新"
         } else {
-            button.title = " --"
+            button.title = "--"
             button.toolTip = state.errorMessage ?? "Codex 额度"
         }
     }

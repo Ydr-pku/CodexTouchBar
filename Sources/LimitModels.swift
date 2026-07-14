@@ -102,6 +102,9 @@ struct RateLimitDisplayState: Equatable {
 struct TokenUsageSummary: Equatable {
     let yesterdayTokens: Int
     let cumulativeTokens: Int
+    let oneHourTokens: Int
+    let fiveHourTokens: Int
+    let sevenDayTokens: Int
     let dailyTokens: [Int]
     let hourlyTokens: [Int]
 

@@ -106,14 +106,14 @@ final class RateLimitStore {
                 return false
             }
             return abs(duration - 300) < 30
-        } ?? primary
+        } ?? (primary?.windowDurationMins == nil ? primary : nil)
 
         let weeklyWindow = candidates.first { window in
             guard let duration = window.windowDurationMins else {
                 return false
             }
             return duration >= 7 * 24 * 60 - 60
-        } ?? secondary
+        } ?? (secondary?.windowDurationMins == nil ? secondary : nil)
 
         let fiveHour = fiveHourWindow.map {
             LimitMeter(title: "5 小时", shortTitle: "5h", window: $0)

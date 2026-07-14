@@ -30,7 +30,7 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
 
     override func loadView() {
         view = hudView
-        view.frame = NSRect(x: 0, y: 0, width: 226, height: 34)
+        view.frame = NSRect(x: 0, y: 0, width: 134, height: 34)
         update(with: currentState)
     }
 
@@ -84,8 +84,7 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
 final class CompactQuotaHUDView: NSView {
     weak var touchBarProvider: CompactHUDViewController?
 
-    private let fiveHourItem = CompactQuotaItemView(title: "5h")
-    private let weeklyItem = CompactQuotaItemView(title: "7d")
+    private let quotaItem = CompactQuotaItemView()
     private let refreshButton = CompactIconButton(
         symbolName: "arrow.clockwise",
         accessibilityLabel: "刷新额度"
@@ -140,9 +139,7 @@ final class CompactQuotaHUDView: NSView {
     }
 
     func update(with state: RateLimitDisplayState) {
-        let hasError = state.errorMessage != nil && state.fiveHour == nil && state.weekly == nil
-        fiveHourItem.update(with: state.fiveHour, hasError: hasError)
-        weeklyItem.update(with: state.weekly, hasError: hasError)
+        quotaItem.update(with: state.weekly ?? state.fiveHour)
         toolTip = state.statusText
     }
 
@@ -163,7 +160,7 @@ final class CompactQuotaHUDView: NSView {
         quitButton.target = self
         quitButton.action = #selector(quitClicked)
 
-        let stack = NSStackView(views: [fiveHourItem, weeklyItem, refreshButton, quitButton])
+        let stack = NSStackView(views: [quotaItem, refreshButton, quitButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -173,10 +170,9 @@ final class CompactQuotaHUDView: NSView {
         addSubview(stack)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 226),
+            widthAnchor.constraint(equalToConstant: 134),
             heightAnchor.constraint(equalToConstant: 34),
-            fiveHourItem.widthAnchor.constraint(equalToConstant: 64),
-            weeklyItem.widthAnchor.constraint(equalToConstant: 64),
+            quotaItem.widthAnchor.constraint(equalToConstant: 52),
             refreshButton.widthAnchor.constraint(equalToConstant: 20),
             refreshButton.heightAnchor.constraint(equalToConstant: 20),
             quitButton.widthAnchor.constraint(equalToConstant: 20),
@@ -197,13 +193,10 @@ final class CompactQuotaHUDView: NSView {
 }
 
 private final class CompactQuotaItemView: NSView {
-    private let dotView = CompactStatusDotView()
-    private let label = NSTextField(labelWithString: "-- --")
-    private let title: String
+    private let label = NSTextField(labelWithString: "--")
 
-    init(title: String) {
-        self.title = title
-        super.init(frame: .zero)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
         configure()
     }
 
@@ -211,18 +204,16 @@ private final class CompactQuotaItemView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(with meter: LimitMeter?, hasError: Bool) {
+    func update(with meter: LimitMeter?) {
         guard let meter else {
-            label.stringValue = "\(title) --"
+            label.stringValue = "--"
             label.textColor = NSColor.white.withAlphaComponent(0.62)
-            dotView.color = hasError ? NSColor.systemRed : NSColor.white.withAlphaComponent(0.28)
             return
         }
 
         let remaining = Int(meter.remainingPercent.rounded())
-        label.stringValue = "\(title) \(remaining)%"
+        label.stringValue = "\(remaining)%"
         label.textColor = .white
-        dotView.color = color(for: remaining)
     }
 
     private func configure() {
@@ -230,35 +221,19 @@ private final class CompactQuotaItemView: NSView {
 
         label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .bold)
         label.textColor = .white
+        label.alignment = .center
         label.lineBreakMode = .byClipping
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [dotView, label])
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 6
-
-        addSubview(stack)
+        addSubview(label)
+        label.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            dotView.widthAnchor.constraint(equalToConstant: 8),
-            dotView.heightAnchor.constraint(equalToConstant: 8),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-    }
-
-    private func color(for remaining: Int) -> NSColor {
-        if remaining <= 20 {
-            return NSColor.systemRed
-        }
-        if remaining <= 45 {
-            return NSColor.systemYellow
-        }
-        return NSColor.systemGreen
     }
 }
 

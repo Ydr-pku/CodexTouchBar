@@ -3,7 +3,8 @@ import AppKit
 final class TouchBarRateLimitsView: NSView {
     private let closeButton = NSButton()
     private let chatGPTIconView = NSImageView()
-    private let usageChartsView = TokenUsageChartsView()
+    private let dailyChartView = TokenUsageChartView(kind: .thirtyDays)
+    private let hourlyChartView = TokenUsageChartView(kind: .todayHours)
     private let quotaSummaryView = TouchBarQuotaSummaryView()
 
     init(closeTarget: AnyObject, closeAction: Selector) {
@@ -18,7 +19,8 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     func update(with state: RateLimitDisplayState) {
-        usageChartsView.update(with: state.tokenUsage)
+        dailyChartView.update(with: state.tokenUsage)
+        hourlyChartView.update(with: state.tokenUsage)
         quotaSummaryView.update(fiveHour: state.fiveHour, weekly: state.weekly)
     }
 
@@ -36,7 +38,13 @@ final class TouchBarRateLimitsView: NSView {
         chatGPTIconView.translatesAutoresizingMaskIntoConstraints = false
         chatGPTIconView.toolTip = "ChatGPT"
 
-        let content = NSStackView(views: [closeButton, chatGPTIconView, usageChartsView, quotaSummaryView])
+        let content = NSStackView(views: [
+            closeButton,
+            chatGPTIconView,
+            dailyChartView,
+            hourlyChartView,
+            quotaSummaryView
+        ])
         content.translatesAutoresizingMaskIntoConstraints = false
         content.orientation = .horizontal
         content.alignment = .centerY
@@ -51,9 +59,11 @@ final class TouchBarRateLimitsView: NSView {
             closeButton.heightAnchor.constraint(equalToConstant: 28),
             chatGPTIconView.widthAnchor.constraint(equalToConstant: 30),
             chatGPTIconView.heightAnchor.constraint(equalToConstant: 30),
-            usageChartsView.widthAnchor.constraint(equalToConstant: 310),
-            usageChartsView.heightAnchor.constraint(equalToConstant: 30),
-            quotaSummaryView.widthAnchor.constraint(equalToConstant: 230),
+            dailyChartView.widthAnchor.constraint(equalToConstant: 178),
+            dailyChartView.heightAnchor.constraint(equalToConstant: 30),
+            hourlyChartView.widthAnchor.constraint(equalToConstant: 178),
+            hourlyChartView.heightAnchor.constraint(equalToConstant: 30),
+            quotaSummaryView.widthAnchor.constraint(equalToConstant: 178),
             quotaSummaryView.heightAnchor.constraint(equalToConstant: 27),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),
             content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
@@ -68,17 +78,39 @@ final class TouchBarRateLimitsView: NSView {
     }
 }
 
-private final class TokenUsageChartsView: NSView {
-    private var dailyTokens = Array(repeating: 0, count: 7)
-    private var hourlyTokens = Array(repeating: 0, count: 24)
+private final class TokenUsageChartView: NSView {
+    enum Kind {
+        case thirtyDays
+        case todayHours
+    }
+
+    private let kind: Kind
+    private var values: [Int]
+    private var oneHourTokens = 0
+
+    init(kind: Kind) {
+        self.kind = kind
+        self.values = Array(repeating: 0, count: kind == .thirtyDays ? 30 : 24)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override var isFlipped: Bool {
         true
     }
 
     func update(with usage: TokenUsageSummary?) {
-        dailyTokens = normalized(usage?.dailyTokens, count: 7)
-        hourlyTokens = normalized(usage?.hourlyTokens, count: 24)
+        oneHourTokens = usage?.oneHourTokens ?? 0
+        switch kind {
+        case .thirtyDays:
+            values = normalized(usage?.dailyTokens, count: 30)
+        case .todayHours:
+            values = normalized(usage?.hourlyTokens, count: 24)
+        }
         toolTip = makeToolTip()
         needsDisplay = true
     }
@@ -86,34 +118,46 @@ private final class TokenUsageChartsView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        drawLabel("近7日", in: NSRect(x: 0, y: 0, width: 32, height: bounds.height))
-        drawBars(
-            dailyTokens,
-            in: NSRect(x: 34, y: 2, width: 84, height: 26),
-            highlightIndex: 6,
-            futureStartIndex: nil,
-            color: .systemTeal
-        )
-
-        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
-        NSRect(x: 124, y: 3, width: 1, height: 24).fill()
-
-        drawLabel("今日", in: NSRect(x: 130, y: 0, width: 28, height: bounds.height))
         let currentHour = Calendar.current.component(.hour, from: Date())
+        let highlightedIndex: Int
+        let futureStartIndex: Int?
+        let caption: String
+        let color: NSColor
+
+        switch kind {
+        case .thirtyDays:
+            highlightedIndex = 29
+            futureStartIndex = nil
+            caption = "近30日 \(compactTokenText(values.reduce(0, +)))"
+            color = .systemTeal
+        case .todayHours:
+            highlightedIndex = currentHour
+            futureStartIndex = currentHour + 1
+            caption = "今 \(compactTokenText(values.reduce(0, +)))  近1h \(compactTokenText(oneHourTokens))"
+            color = .systemGreen
+        }
+
+        let chartInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 8)
+        let chartWidth = max(0, bounds.width - chartInsets.left - chartInsets.right)
+
+        drawCaption(caption, in: NSRect(x: 0, y: 0, width: bounds.width - chartInsets.right, height: 10))
         drawBars(
-            hourlyTokens,
-            in: NSRect(x: 160, y: 2, width: 148, height: 26),
-            highlightIndex: currentHour,
-            futureStartIndex: currentHour + 1,
-            color: .systemGreen
+            values,
+            in: NSRect(x: chartInsets.left, y: 11, width: chartWidth, height: 17),
+            highlightIndex: highlightedIndex,
+            futureStartIndex: futureStartIndex,
+            color: color
         )
+
+        NSColor.separatorColor.withAlphaComponent(0.6).setFill()
+        NSRect(x: bounds.maxX - 1, y: 3, width: 1, height: 24).fill()
     }
 
-    private func drawLabel(_ text: String, in rect: NSRect) {
+    private func drawCaption(_ text: String, in rect: NSRect) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 8.5, weight: .medium),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium),
             .foregroundColor: NSColor.secondaryLabelColor,
             .paragraphStyle: paragraph
         ]
@@ -138,16 +182,21 @@ private final class TokenUsageChartsView: NSView {
             return
         }
 
-        let spacing: CGFloat = values.count > 12 ? 1 : 2
-        let barWidth = max(1, (rect.width - CGFloat(values.count - 1) * spacing) / CGFloat(values.count))
+        let barWidth: CGFloat = 4
+        let occupiedByBars = CGFloat(values.count) * barWidth
+        let spacing = values.count > 1
+            ? max(0, (rect.width - occupiedByBars) / CGFloat(values.count - 1))
+            : 0
+        let chartWidth = occupiedByBars + CGFloat(values.count - 1) * spacing
+        let startX = rect.minX + (rect.width - chartWidth) / 2
         let maximum = max(1, values.max() ?? 0)
 
         for (index, value) in values.enumerated() {
             let ratio = CGFloat(value) / CGFloat(maximum)
             let barHeight = value == 0 ? 1 : max(2, ratio * rect.height)
-            let x = rect.minX + CGFloat(index) * (barWidth + spacing)
+            let x = startX + CGFloat(index) * (barWidth + spacing)
             let barRect = NSRect(x: x, y: rect.maxY - barHeight, width: barWidth, height: barHeight)
-            let path = NSBezierPath(roundedRect: barRect, xRadius: min(1.5, barWidth / 2), yRadius: 1.5)
+            let path = NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5)
 
             if let futureStartIndex, index >= futureStartIndex {
                 NSColor.separatorColor.withAlphaComponent(0.18).setFill()
@@ -169,111 +218,124 @@ private final class TokenUsageChartsView: NSView {
         return Array((values + Array(repeating: 0, count: count)).prefix(count))
     }
 
+    private func compactTokenText(_ tokens: Int) -> String {
+        let millions = Double(tokens) / 1_000_000
+        if millions >= 100 {
+            return String(format: "%.0fM", millions)
+        }
+        if millions >= 10 {
+            return String(format: "%.1fM", millions)
+        }
+        return String(format: "%.2fM", millions)
+    }
+
     private func makeToolTip() -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        let daily = formatter.string(from: NSNumber(value: dailyTokens.reduce(0, +))) ?? "0"
-        let today = formatter.string(from: NSNumber(value: hourlyTokens.reduce(0, +))) ?? "0"
-        return "近 7 日 \(daily) tokens，今日 \(today) tokens"
+        let total = formatter.string(from: NSNumber(value: values.reduce(0, +))) ?? "0"
+        return kind == .thirtyDays
+            ? "近 30 日 \(total) tokens"
+            : "今日 \(total) tokens"
     }
 }
 
 private final class TouchBarQuotaSummaryView: NSView {
-    private let fiveHourRow = TouchBarQuotaSummaryRow(title: "5h")
-    private let weeklyRow = TouchBarQuotaSummaryRow(title: "7d")
+    private var meter: LimitMeter?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        configure()
+        translatesAutoresizingMaskIntoConstraints = false
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool {
+        true
     }
 
     func update(fiveHour: LimitMeter?, weekly: LimitMeter?) {
-        fiveHourRow.update(with: fiveHour)
-        weeklyRow.update(with: weekly)
+        meter = weekly ?? fiveHour
+        toolTip = meter.map { "\($0.title)：Token 剩余 \($0.remainingText)，\($0.resetText)" }
+        needsDisplay = true
     }
 
-    private func configure() {
-        translatesAutoresizingMaskIntoConstraints = false
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
 
-        let rows = NSStackView(views: [fiveHourRow, weeklyRow])
-        rows.translatesAutoresizingMaskIntoConstraints = false
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 1
+        let tokenPercent = meter?.remainingPercent ?? 0
+        drawBar(
+            in: NSRect(x: 4, y: 1, width: max(0, bounds.width - 8), height: 12),
+            percent: tokenPercent,
+            text: meter.map { "Token \(Int($0.remainingPercent.rounded()))%" } ?? "Token --",
+            color: color(for: tokenPercent)
+        )
 
-        addSubview(rows)
-
-        NSLayoutConstraint.activate([
-            fiveHourRow.widthAnchor.constraint(equalToConstant: 230),
-            weeklyRow.widthAnchor.constraint(equalToConstant: 230),
-            rows.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rows.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rows.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-}
-
-private final class TouchBarQuotaSummaryRow: NSView {
-    private let baseTitle: String
-    private let titleLabel: NSTextField
-    private let resetLabel = NSTextField(labelWithString: "-- 重置")
-
-    init(title: String) {
-        baseTitle = title
-        titleLabel = NSTextField(labelWithString: "\(title) --")
-        super.init(frame: .zero)
-        configure()
+        let time = remainingTime(for: meter)
+        drawBar(
+            in: NSRect(x: 4, y: 15, width: max(0, bounds.width - 8), height: 12),
+            percent: time?.percent ?? 0,
+            text: time.map { "Time \(Int($0.percent.rounded()))% · \($0.text)" } ?? "Time --",
+            color: .systemBlue
+        )
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    private func drawBar(in rect: NSRect, percent: Double, text: String, color: NSColor) {
+        let background = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+        NSColor.separatorColor.withAlphaComponent(0.22).setFill()
+        background.fill()
 
-    func update(with meter: LimitMeter?) {
-        guard let meter else {
-            titleLabel.stringValue = "\(baseTitle) --"
-            titleLabel.textColor = .secondaryLabelColor
-            resetLabel.stringValue = "-- 重置"
-            return
+        let ratio = CGFloat(max(0, min(100, percent)) / 100)
+        if ratio > 0 {
+            let fillRect = NSRect(x: rect.minX, y: rect.minY, width: rect.width * ratio, height: rect.height)
+            let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3)
+            color.withAlphaComponent(0.72).setFill()
+            fill.fill()
         }
 
-        titleLabel.stringValue = "\(baseTitle) \(meter.remainingText)"
-        titleLabel.textColor = color(for: meter.remainingPercent)
-        resetLabel.stringValue = meter.resetText
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let textRect = NSRect(
+            x: rect.minX,
+            y: rect.midY - textSize.height / 2,
+            width: rect.width,
+            height: textSize.height
+        )
+        text.draw(in: textRect, withAttributes: attributes)
     }
 
-    private func configure() {
-        translatesAutoresizingMaskIntoConstraints = false
+    private func remainingTime(for meter: LimitMeter?) -> (percent: Double, text: String)? {
+        guard
+            let meter,
+            let resetDate = meter.resetDate,
+            let durationMinutes = meter.durationMinutes,
+            durationMinutes > 0
+        else {
+            return nil
+        }
 
-        titleLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-        titleLabel.lineBreakMode = .byClipping
+        let remainingSeconds = max(0, resetDate.timeIntervalSinceNow)
+        let percent = max(0, min(100, remainingSeconds / (durationMinutes * 60) * 100))
+        return (percent, compactDuration(remainingSeconds))
+    }
 
-        resetLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-        resetLabel.textColor = .secondaryLabelColor
-        resetLabel.alignment = .right
-        resetLabel.lineBreakMode = .byClipping
-
-        let row = NSStackView(views: [titleLabel, resetLabel])
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 4
-
-        addSubview(row)
-
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 13),
-            titleLabel.widthAnchor.constraint(equalToConstant: 60),
-            resetLabel.widthAnchor.constraint(equalToConstant: 166),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+    private func compactDuration(_ seconds: TimeInterval) -> String {
+        if seconds >= 86_400 {
+            let days = Int(seconds / 86_400)
+            let hours = (seconds - Double(days) * 86_400) / 3_600
+            return "\(days)d\(String(format: "%.1f", hours))h"
+        }
+        if seconds >= 3_600 {
+            return String(format: "%.1fh", seconds / 3_600)
+        }
+        return "\(Int(ceil(seconds / 60)))m"
     }
 
     private func color(for remaining: Double) -> NSColor {
