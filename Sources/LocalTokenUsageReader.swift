@@ -14,15 +14,17 @@ enum LocalTokenUsageReader {
         }
 
         let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
         guard
-            let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: Date())),
-            let yesterdayEnd = calendar.date(byAdding: .day, value: 1, to: yesterdayStart)
+            let sevenDayStart = calendar.date(byAdding: .day, value: -6, to: todayStart),
+            let tomorrowStart = calendar.date(byAdding: .day, value: 1, to: todayStart)
         else {
             return nil
         }
 
-        var yesterdayTokens = 0
         var cumulativeTokens = 0
+        var dailyTokens = Array(repeating: 0, count: 7)
+        var hourlyTokens = Array(repeating: 0, count: 24)
 
         for case let fileURL as URL in enumerator {
             guard fileURL.pathExtension == "jsonl" else {
@@ -31,29 +33,42 @@ enum LocalTokenUsageReader {
 
             let fileUsage = readUsage(
                 from: fileURL,
-                yesterdayStart: yesterdayStart,
-                yesterdayEnd: yesterdayEnd
+                calendar: calendar,
+                sevenDayStart: sevenDayStart,
+                todayStart: todayStart,
+                tomorrowStart: tomorrowStart
             )
-            yesterdayTokens += fileUsage.yesterdayTokens
             cumulativeTokens += fileUsage.finalTotalTokens
+
+            for index in dailyTokens.indices {
+                dailyTokens[index] += fileUsage.dailyTokens[index]
+            }
+            for index in hourlyTokens.indices {
+                hourlyTokens[index] += fileUsage.hourlyTokens[index]
+            }
         }
 
         return TokenUsageSummary(
-            yesterdayTokens: yesterdayTokens,
-            cumulativeTokens: cumulativeTokens
+            yesterdayTokens: dailyTokens[5],
+            cumulativeTokens: cumulativeTokens,
+            dailyTokens: dailyTokens,
+            hourlyTokens: hourlyTokens
         )
     }
 
     private static func readUsage(
         from fileURL: URL,
-        yesterdayStart: Date,
-        yesterdayEnd: Date
-    ) -> (yesterdayTokens: Int, finalTotalTokens: Int) {
+        calendar: Calendar,
+        sevenDayStart: Date,
+        todayStart: Date,
+        tomorrowStart: Date
+    ) -> (dailyTokens: [Int], hourlyTokens: [Int], finalTotalTokens: Int) {
         guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
-            return (0, 0)
+            return (Array(repeating: 0, count: 7), Array(repeating: 0, count: 24), 0)
         }
 
-        var yesterdayTokens = 0
+        var dailyTokens = Array(repeating: 0, count: 7)
+        var hourlyTokens = Array(repeating: 0, count: 24)
         var finalTotalTokens = 0
 
         for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -80,18 +95,29 @@ enum LocalTokenUsageReader {
             guard
                 let timestampString = event["timestamp"] as? String,
                 let timestamp = parseDate(timestampString),
-                timestamp >= yesterdayStart,
-                timestamp < yesterdayEnd,
                 let lastUsage = info["last_token_usage"] as? [String: Any],
                 let lastTokens = intValue(lastUsage["total_tokens"])
             else {
                 continue
             }
 
-            yesterdayTokens += lastTokens
+            if timestamp >= sevenDayStart && timestamp < tomorrowStart {
+                let eventDay = calendar.startOfDay(for: timestamp)
+                if let dayIndex = calendar.dateComponents([.day], from: sevenDayStart, to: eventDay).day,
+                   dailyTokens.indices.contains(dayIndex) {
+                    dailyTokens[dayIndex] += lastTokens
+                }
+            }
+
+            if timestamp >= todayStart && timestamp < tomorrowStart {
+                let hour = calendar.component(.hour, from: timestamp)
+                if hourlyTokens.indices.contains(hour) {
+                    hourlyTokens[hour] += lastTokens
+                }
+            }
         }
 
-        return (yesterdayTokens, finalTotalTokens)
+        return (dailyTokens, hourlyTokens, finalTotalTokens)
     }
 
     private static func parseDate(_ value: String) -> Date? {

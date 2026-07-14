@@ -102,6 +102,8 @@ struct RateLimitDisplayState: Equatable {
 struct TokenUsageSummary: Equatable {
     let yesterdayTokens: Int
     let cumulativeTokens: Int
+    let dailyTokens: [Int]
+    let hourlyTokens: [Int]
 
     var yesterdayText: String {
         "昨日 \(Self.formatAsWan(yesterdayTokens))"
