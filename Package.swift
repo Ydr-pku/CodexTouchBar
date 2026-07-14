@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "TouchBarCodexToken",
-            path: "Sources"
+            path: "Sources",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         )
     ]
 )

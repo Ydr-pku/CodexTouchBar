@@ -8,6 +8,7 @@ final class RateLimitStore {
     weak var delegate: RateLimitStoreDelegate?
 
     private let client = CodexAppServerClient()
+    private let hourlyUsageStore = HourlyUsageStore()
     private let tokenUsageQueue = DispatchQueue(label: "TouchBarCodexToken.LocalTokenUsageReader", qos: .utility)
     private var timer: Timer?
     private var state = RateLimitDisplayState.initial
@@ -144,6 +145,13 @@ final class RateLimitStore {
         tokenUsageInFlight = true
         tokenUsageQueue.async { [weak self] in
             let tokenUsage = LocalTokenUsageReader.read()
+            if let tokenUsage {
+                do {
+                    try self?.hourlyUsageStore.upsert(tokenUsage.hourlyBuckets)
+                } catch {
+                    NSLog("Unable to save hourly token usage: \(error.localizedDescription)")
+                }
+            }
 
             DispatchQueue.main.async {
                 guard let self else {

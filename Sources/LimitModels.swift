@@ -107,6 +107,7 @@ struct TokenUsageSummary: Equatable {
     let sevenDayTokens: Int
     let dailyTokens: [Int]
     let hourlyTokens: [Int]
+    let hourlyBuckets: [HourlyTokenUsage]
 
     var yesterdayText: String {
         "昨日 \(Self.formatAsWan(yesterdayTokens))"
@@ -135,4 +136,9 @@ struct TokenUsageSummary: Equatable {
         }
         return String(format: "%.2f", value)
     }
+}
+
+struct HourlyTokenUsage: Equatable {
+    let hourStart: Date
+    let tokens: Int
 }

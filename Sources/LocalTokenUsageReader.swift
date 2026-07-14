@@ -32,6 +32,7 @@ enum LocalTokenUsageReader {
         var sevenDayTokens = 0
         var dailyTokens = Array(repeating: 0, count: 30)
         var hourlyTokens = Array(repeating: 0, count: 24)
+        var hourlyBuckets: [Int64: Int] = [:]
 
         for case let fileURL as URL in enumerator {
             guard fileURL.pathExtension == "jsonl" else {
@@ -54,6 +55,10 @@ enum LocalTokenUsageReader {
             fiveHourTokens += fileUsage.fiveHourTokens
             sevenDayTokens += fileUsage.sevenDayTokens
 
+            for (hour, tokens) in fileUsage.hourlyBuckets {
+                hourlyBuckets[hour, default: 0] += tokens
+            }
+
             for index in dailyTokens.indices {
                 dailyTokens[index] += fileUsage.dailyTokens[index]
             }
@@ -69,7 +74,10 @@ enum LocalTokenUsageReader {
             fiveHourTokens: fiveHourTokens,
             sevenDayTokens: sevenDayTokens,
             dailyTokens: dailyTokens,
-            hourlyTokens: hourlyTokens
+            hourlyTokens: hourlyTokens,
+            hourlyBuckets: hourlyBuckets
+                .map { HourlyTokenUsage(hourStart: Date(timeIntervalSince1970: TimeInterval($0.key)), tokens: $0.value) }
+                .sorted { $0.hourStart < $1.hourStart }
         )
     }
 
@@ -83,13 +91,14 @@ enum LocalTokenUsageReader {
         fiveHourStart: Date,
         sevenDayUsageStart: Date,
         now: Date
-    ) -> (dailyTokens: [Int], hourlyTokens: [Int], oneHourTokens: Int, fiveHourTokens: Int, sevenDayTokens: Int, finalTotalTokens: Int) {
+    ) -> (dailyTokens: [Int], hourlyTokens: [Int], hourlyBuckets: [Int64: Int], oneHourTokens: Int, fiveHourTokens: Int, sevenDayTokens: Int, finalTotalTokens: Int) {
         guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
-            return (Array(repeating: 0, count: 30), Array(repeating: 0, count: 24), 0, 0, 0, 0)
+            return (Array(repeating: 0, count: 30), Array(repeating: 0, count: 24), [:], 0, 0, 0, 0)
         }
 
         var dailyTokens = Array(repeating: 0, count: 30)
         var hourlyTokens = Array(repeating: 0, count: 24)
+        var hourlyBuckets: [Int64: Int] = [:]
         var oneHourTokens = 0
         var fiveHourTokens = 0
         var sevenDayTokens = 0
@@ -125,6 +134,12 @@ enum LocalTokenUsageReader {
                 continue
             }
 
+            if timestamp <= now,
+               let hourStart = calendar.dateInterval(of: .hour, for: timestamp)?.start {
+                let hour = Int64(hourStart.timeIntervalSince1970.rounded())
+                hourlyBuckets[hour, default: 0] += lastTokens
+            }
+
             if timestamp >= thirtyDayStart && timestamp < tomorrowStart {
                 let eventDay = calendar.startOfDay(for: timestamp)
                 if let dayIndex = calendar.dateComponents([.day], from: thirtyDayStart, to: eventDay).day,
@@ -153,7 +168,7 @@ enum LocalTokenUsageReader {
             }
         }
 
-        return (dailyTokens, hourlyTokens, oneHourTokens, fiveHourTokens, sevenDayTokens, finalTotalTokens)
+        return (dailyTokens, hourlyTokens, hourlyBuckets, oneHourTokens, fiveHourTokens, sevenDayTokens, finalTotalTokens)
     }
 
     private static func parseDate(_ value: String) -> Date? {

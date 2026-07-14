@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let store = RateLimitStore()
+    private let hourlyUsageStore = HourlyUsageStore()
     private let lifecycleMonitor = CodexLifecycleMonitor()
     private var hudAppearance = HUDAppearance.load()
     private var hudVisibilityMenuItem: NSMenuItem?
@@ -79,6 +80,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         )
         refreshItem.target = self
         menu.addItem(refreshItem)
+        menu.addItem(.separator())
+
+        let exportUsageItem = NSMenuItem(
+            title: "导出用量 CSV",
+            action: #selector(exportUsageCSV(_:)),
+            keyEquivalent: ""
+        )
+        exportUsageItem.target = self
+        menu.addItem(exportUsageItem)
+
+        let openUsageDirectoryItem = NSMenuItem(
+            title: "打开数据目录",
+            action: #selector(openUsageDirectory(_:)),
+            keyEquivalent: ""
+        )
+        openUsageDirectoryItem.target = self
+        menu.addItem(openUsageDirectoryItem)
 
         let settingsItem = NSMenuItem(title: "设置", action: nil, keyEquivalent: "")
         let settingsMenu = NSMenu(title: "设置")
@@ -198,6 +216,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         refreshQuotaNow()
     }
 
+    @objc private func exportUsageCSV(_ sender: AnyObject?) {
+        do {
+            let csvURL = try hourlyUsageStore.exportCSV()
+            NSWorkspace.shared.activateFileViewerSelecting([csvURL])
+        } catch {
+            presentStorageError(error)
+        }
+    }
+
+    @objc private func openUsageDirectory(_ sender: AnyObject?) {
+        do {
+            let directoryURL = try hourlyUsageStore.ensureStorageDirectory()
+            NSWorkspace.shared.open(directoryURL)
+        } catch {
+            presentStorageError(error)
+        }
+    }
+
     @objc private func quitFromMenu(_ sender: AnyObject?) {
         quitApp()
     }
@@ -225,6 +261,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         hudAppearance.save()
         hudController.updateAppearance(hudAppearance)
         updateMenuState()
+    }
+
+    private func presentStorageError(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "无法读取用量数据"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     private func updateMenuState() {
