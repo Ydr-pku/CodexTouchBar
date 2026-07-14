@@ -67,13 +67,7 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     private static func codexIcon() -> NSImage {
-        let iconPath = "/Applications/Codex.app/Contents/Resources/icon.icns"
-        if let image = NSImage(contentsOfFile: iconPath) {
-            image.size = NSSize(width: 30, height: 30)
-            return image
-        }
-
-        let image = NSWorkspace.shared.icon(forFile: "/Applications/Codex.app")
+        let image = NSWorkspace.shared.icon(forFile: "/Applications/ChatGPT.app")
         image.size = NSSize(width: 30, height: 30)
         return image
     }

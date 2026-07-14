@@ -132,6 +132,8 @@ final class CompactQuotaHUDView: NSView {
     }
 
     func activateTouchBar() {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(self)
         touchBar = nil
         touchBar = makeTouchBar()
