@@ -5,6 +5,24 @@ struct GetAccountRateLimitsResponse: Codable {
     let rateLimitsByLimitId: [String: RateLimitSnapshot]?
 }
 
+struct GetAccountTokenUsageResponse: Codable {
+    let dailyUsageBuckets: [AccountTokenUsageDailyBucket]?
+    let summary: AccountTokenUsageResponseSummary
+}
+
+struct AccountTokenUsageDailyBucket: Codable, Equatable {
+    let startDate: String
+    let tokens: Int
+}
+
+struct AccountTokenUsageResponseSummary: Codable, Equatable {
+    let lifetimeTokens: Int?
+    let peakDailyTokens: Int?
+    let longestRunningTurnSec: Int?
+    let currentStreakDays: Int?
+    let longestStreakDays: Int?
+}
+
 struct RateLimitSnapshot: Codable {
     let limitId: String?
     let limitName: String?
@@ -66,6 +84,7 @@ struct LimitMeter: Equatable {
 struct RateLimitDisplayState: Equatable {
     var fiveHour: LimitMeter?
     var weekly: LimitMeter?
+    var accountTokenUsage: AccountTokenUsage?
     var tokenUsage: TokenUsageSummary?
     var isRefreshing: Bool
     var lastUpdated: Date?
@@ -74,6 +93,7 @@ struct RateLimitDisplayState: Equatable {
     static let initial = RateLimitDisplayState(
         fiveHour: nil,
         weekly: nil,
+        accountTokenUsage: nil,
         tokenUsage: nil,
         isRefreshing: false,
         lastUpdated: nil,
@@ -97,6 +117,11 @@ struct RateLimitDisplayState: Equatable {
         formatter.dateFormat = "HH:mm:ss"
         return "上次更新 \(formatter.string(from: lastUpdated))"
     }
+}
+
+struct AccountTokenUsage: Equatable {
+    let dailyTokens: [Int]
+    let lifetimeTokens: Int?
 }
 
 struct TokenUsageSummary: Equatable {

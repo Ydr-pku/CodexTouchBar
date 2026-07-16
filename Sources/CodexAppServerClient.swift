@@ -93,6 +93,26 @@ final class CodexAppServerClient {
         }
     }
 
+    func readAccountTokenUsage(completion: @escaping (Result<GetAccountTokenUsageResponse, Error>) -> Void) {
+        request(method: "account/usage/read", params: nil) { result in
+            switch result {
+            case .success(let value):
+                do {
+                    guard JSONSerialization.isValidJSONObject(value) else {
+                        throw CodexAppServerError.malformedResponse
+                    }
+                    let data = try JSONSerialization.data(withJSONObject: value)
+                    let response = try JSONDecoder().decode(GetAccountTokenUsageResponse.self, from: data)
+                    completion(.success(response))
+                } catch {
+                    completion(.failure(error))
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     private func launchProcess() throws {
         guard let codexURL = codexCandidates.first(where: {
             FileManager.default.isExecutableFile(atPath: $0.path)

@@ -16,6 +16,7 @@ final class HourlyUsageStore {
     private static let directoryName = "TouchBarCodexToken"
     private static let databaseName = "token-usage.sqlite3"
     private static let csvName = "token-usage.csv"
+    private static let quotaSnapshotName = "quota-status.json"
 
     func ensureStorageDirectory() throws -> URL {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -121,6 +122,24 @@ final class HourlyUsageStore {
         let csvURL = directoryURL.appendingPathComponent(Self.csvName)
         try csv.write(to: csvURL, atomically: true, encoding: .utf8)
         return csvURL
+    }
+
+    func saveQuotaSnapshot(_ meter: LimitMeter) throws {
+        let directoryURL = try ensureStorageDirectory()
+        let snapshotURL = directoryURL.appendingPathComponent(Self.quotaSnapshotName)
+        var snapshot: [String: Any] = [
+            "title": meter.title,
+            "remainingPercent": meter.remainingPercent,
+            "updatedAt": Date().timeIntervalSince1970
+        ]
+        if let resetDate = meter.resetDate {
+            snapshot["resetAt"] = resetDate.timeIntervalSince1970
+        }
+        if let durationMinutes = meter.durationMinutes {
+            snapshot["durationMinutes"] = durationMinutes
+        }
+        let data = try JSONSerialization.data(withJSONObject: snapshot, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: snapshotURL, options: .atomic)
     }
 
     private func openDatabase() throws -> OpaquePointer {

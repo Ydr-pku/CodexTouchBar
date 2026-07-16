@@ -14,6 +14,7 @@ final class RateLimitStore {
     private var state = RateLimitDisplayState.initial
     private var refreshInFlight = false
     private var tokenUsageInFlight = false
+    private var accountTokenUsageInFlight = false
     private var isStarted = false
 
     func start() {
@@ -46,6 +47,7 @@ final class RateLimitStore {
         isStarted = false
         refreshInFlight = false
         tokenUsageInFlight = false
+        accountTokenUsageInFlight = false
         timer?.invalidate()
         timer = nil
         client.stop()
@@ -95,8 +97,16 @@ final class RateLimitStore {
         state.isRefreshing = false
         state.lastUpdated = Date()
         state.errorMessage = nil
+        if let meter = state.weekly ?? state.fiveHour {
+            do {
+                try hourlyUsageStore.saveQuotaSnapshot(meter)
+            } catch {
+                NSLog("Unable to save quota snapshot: \(error.localizedDescription)")
+            }
+        }
         publish()
         refreshTokenUsage()
+        refreshAccountTokenUsage()
     }
 
     private func classifyWindows(primary: RateLimitWindow?, secondary: RateLimitWindow?) -> (fiveHour: LimitMeter?, weekly: LimitMeter?) {
@@ -167,5 +177,62 @@ final class RateLimitStore {
                 self.publish()
             }
         }
+    }
+
+    private func refreshAccountTokenUsage() {
+        guard !accountTokenUsageInFlight else {
+            return
+        }
+
+        accountTokenUsageInFlight = true
+        client.readAccountTokenUsage { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            self.accountTokenUsageInFlight = false
+            guard self.isStarted else {
+                return
+            }
+
+            switch result {
+            case .success(let response):
+                self.state.accountTokenUsage = self.makeAccountTokenUsage(from: response)
+                self.publish()
+            case .failure(let error):
+                NSLog("Unable to read account token usage: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func makeAccountTokenUsage(from response: GetAccountTokenUsageResponse) -> AccountTokenUsage {
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
+        let thirtyDayStart = calendar.date(byAdding: .day, value: -29, to: todayStart) ?? todayStart
+        var dailyTokens = Array(repeating: 0, count: 30)
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        for bucket in response.dailyUsageBuckets ?? [] {
+            guard let date = formatter.date(from: bucket.startDate),
+                  let dayIndex = calendar.dateComponents(
+                    [.day],
+                    from: thirtyDayStart,
+                    to: calendar.startOfDay(for: date)
+                  ).day,
+                  dailyTokens.indices.contains(dayIndex) else {
+                continue
+            }
+            dailyTokens[dayIndex] += bucket.tokens
+        }
+
+        return AccountTokenUsage(
+            dailyTokens: dailyTokens,
+            lifetimeTokens: response.summary.lifetimeTokens
+        )
     }
 }

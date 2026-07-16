@@ -7,7 +7,11 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
     }
 
     private let hudView: CompactQuotaHUDView
-    private lazy var touchBarView = TouchBarRateLimitsView(closeTarget: self, closeAction: #selector(quitClicked))
+    private lazy var touchBarView = TouchBarRateLimitsView(
+        closeTarget: self,
+        closeAction: #selector(quitClicked),
+        showsCloseButton: false
+    )
     private var currentState = RateLimitDisplayState.initial
     private let onRefresh: () -> Void
     private let onQuit: () -> Void
@@ -47,7 +51,20 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
     }
 
     func activateTouchBar() {
+        guard TouchBarPresentationEnvironment.hasActiveBuiltInDisplay else {
+            return
+        }
+        hudView.collapseDetails(animated: false)
         hudView.activateTouchBar()
+    }
+
+    func presentQuotaDetails() {
+        if TouchBarPresentationEnvironment.hasActiveBuiltInDisplay {
+            hudView.collapseDetails(animated: true)
+            hudView.activateTouchBar()
+        } else {
+            hudView.toggleDetails()
+        }
     }
 
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
@@ -81,7 +98,31 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
     }
 }
 
+private enum TouchBarPresentationEnvironment {
+    static var hasActiveBuiltInDisplay: Bool {
+        let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
+        for screen in NSScreen.screens {
+            if let number = screen.deviceDescription[screenNumberKey] as? NSNumber,
+               CGDisplayIsBuiltin(CGDirectDisplayID(number.uint32Value)) != 0 {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 final class CompactQuotaHUDView: NSView {
+    private enum Layout {
+        static let compactSize = NSSize(width: 134, height: 34)
+        static let expandedSize = NSSize(width: 620, height: 34)
+    }
+
+    private enum HorizontalExpansionAnchor {
+        case left
+        case center
+        case right
+    }
+
     weak var touchBarProvider: CompactHUDViewController?
 
     private let quotaItem = CompactQuotaItemView()
@@ -96,21 +137,30 @@ final class CompactQuotaHUDView: NSView {
     private let onRefresh: () -> Void
     private let onQuit: () -> Void
     private var hudAppearance: HUDAppearance
+    private var widthConstraint: NSLayoutConstraint?
+    private var compactStack: NSStackView?
+    private var detailsView: TouchBarRateLimitsView!
+    private var expansionAnchor = HorizontalExpansionAnchor.center
+    private var mouseDownScreenLocation: NSPoint?
+    private var windowOriginAtMouseDown: NSPoint?
+    private var didDrag = false
 
     init(initialAppearance: HUDAppearance, onRefresh: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.onRefresh = onRefresh
         self.onQuit = onQuit
         self.hudAppearance = initialAppearance
         super.init(frame: .zero)
+        detailsView = TouchBarRateLimitsView(
+            closeTarget: self,
+            closeAction: #selector(collapseClicked),
+            showsCloseButton: false
+        )
+        detailsView.appearance = NSAppearance(named: .darkAqua)
         configure()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    override var mouseDownCanMoveWindow: Bool {
-        true
     }
 
     override var acceptsFirstResponder: Bool {
@@ -121,9 +171,52 @@ final class CompactQuotaHUDView: NSView {
         true
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point) else {
+            return nil
+        }
+
+        if detailsView.isHidden {
+            let refreshPoint = refreshButton.convert(point, from: self)
+            let quitPoint = quitButton.convert(point, from: self)
+            if refreshButton.bounds.contains(refreshPoint) || quitButton.bounds.contains(quitPoint) {
+                return super.hitTest(point)
+            }
+        }
+        return self
+    }
+
     override func mouseDown(with event: NSEvent) {
-        activateTouchBar()
-        super.mouseDown(with: event)
+        mouseDownScreenLocation = NSEvent.mouseLocation
+        windowOriginAtMouseDown = window?.frame.origin
+        didDrag = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let startLocation = mouseDownScreenLocation,
+              let startOrigin = windowOriginAtMouseDown,
+              let window else {
+            return
+        }
+
+        let currentLocation = NSEvent.mouseLocation
+        let deltaX = currentLocation.x - startLocation.x
+        let deltaY = currentLocation.y - startLocation.y
+        if hypot(deltaX, deltaY) >= 4 {
+            didDrag = true
+        }
+        if didDrag {
+            window.setFrameOrigin(NSPoint(x: startOrigin.x + deltaX, y: startOrigin.y + deltaY))
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !didDrag {
+            touchBarProvider?.presentQuotaDetails()
+        }
+        mouseDownScreenLocation = nil
+        windowOriginAtMouseDown = nil
+        didDrag = false
     }
 
     override func makeTouchBar() -> NSTouchBar? {
@@ -140,7 +233,39 @@ final class CompactQuotaHUDView: NSView {
 
     func update(with state: RateLimitDisplayState) {
         quotaItem.update(with: state.weekly ?? state.fiveHour)
+        detailsView.update(with: state)
         toolTip = state.statusText
+    }
+
+    func showDetails() {
+        guard detailsView.isHidden else {
+            return
+        }
+
+        expansionAnchor = preferredExpansionAnchor()
+        compactStack?.isHidden = true
+        detailsView.isHidden = false
+        widthConstraint?.constant = Layout.expandedSize.width
+        resizeWindow(to: Layout.expandedSize, animated: true)
+    }
+
+    func toggleDetails() {
+        if detailsView.isHidden {
+            showDetails()
+        } else {
+            collapseDetails(animated: true)
+        }
+    }
+
+    func collapseDetails(animated: Bool) {
+        guard !detailsView.isHidden else {
+            return
+        }
+
+        detailsView.isHidden = true
+        compactStack?.isHidden = false
+        widthConstraint?.constant = Layout.compactSize.width
+        resizeWindow(to: Layout.compactSize, animated: animated)
     }
 
     func updateAppearance(_ appearance: HUDAppearance) {
@@ -166,21 +291,80 @@ final class CompactQuotaHUDView: NSView {
         stack.alignment = .centerY
         stack.distribution = .fill
         stack.spacing = 8
+        compactStack = stack
 
         addSubview(stack)
+        addSubview(detailsView)
+        detailsView.isHidden = true
+
+        let widthConstraint = widthAnchor.constraint(equalToConstant: Layout.compactSize.width)
+        self.widthConstraint = widthConstraint
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 134),
-            heightAnchor.constraint(equalToConstant: 34),
+            widthConstraint,
+            heightAnchor.constraint(equalToConstant: Layout.compactSize.height),
             quotaItem.widthAnchor.constraint(equalToConstant: 52),
             refreshButton.widthAnchor.constraint(equalToConstant: 20),
             refreshButton.heightAnchor.constraint(equalToConstant: 20),
             quitButton.widthAnchor.constraint(equalToConstant: 20),
             quitButton.heightAnchor.constraint(equalToConstant: 20),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
+            stack.widthAnchor.constraint(equalToConstant: 108),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            detailsView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            detailsView.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+    }
+
+    private func resizeWindow(to size: NSSize, animated: Bool) {
+        guard let window else {
+            frame.size = size
+            return
+        }
+
+        let currentFrame = window.frame
+        let targetX: CGFloat
+        switch expansionAnchor {
+        case .left:
+            targetX = currentFrame.minX
+        case .center:
+            targetX = currentFrame.midX - size.width / 2
+        case .right:
+            targetX = currentFrame.maxX - size.width
+        }
+        let targetFrame = NSRect(
+            x: targetX,
+            y: currentFrame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(targetFrame, display: true)
+            }
+        } else {
+            window.setFrame(targetFrame, display: true)
+        }
+    }
+
+    private func preferredExpansionAnchor() -> HorizontalExpansionAnchor {
+        guard let window else {
+            return .center
+        }
+
+        let screenFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        let relativeX = window.frame.midX - screenFrame.minX
+        let third = screenFrame.width / 3
+
+        if relativeX < third {
+            return .left
+        }
+        if relativeX > third * 2 {
+            return .right
+        }
+        return .center
     }
 
     @objc private func refreshClicked() {
@@ -189,6 +373,10 @@ final class CompactQuotaHUDView: NSView {
 
     @objc private func quitClicked() {
         onQuit()
+    }
+
+    @objc private func collapseClicked() {
+        collapseDetails(animated: true)
     }
 }
 

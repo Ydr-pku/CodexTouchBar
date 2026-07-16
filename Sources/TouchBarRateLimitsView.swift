@@ -2,12 +2,15 @@ import AppKit
 
 final class TouchBarRateLimitsView: NSView {
     private let closeButton = NSButton()
+    private let showsCloseButton: Bool
     private let chatGPTIconView = NSImageView()
+    private let accountDailyChartView = TokenUsageChartView(kind: .accountThirtyDays)
     private let dailyChartView = TokenUsageChartView(kind: .thirtyDays)
     private let hourlyChartView = TokenUsageChartView(kind: .todayHours)
     private let quotaSummaryView = TouchBarQuotaSummaryView()
 
-    init(closeTarget: AnyObject, closeAction: Selector) {
+    init(closeTarget: AnyObject, closeAction: Selector, showsCloseButton: Bool = true) {
+        self.showsCloseButton = showsCloseButton
         super.init(frame: .zero)
         closeButton.target = closeTarget
         closeButton.action = closeAction
@@ -19,6 +22,7 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     func update(with state: RateLimitDisplayState) {
+        accountDailyChartView.update(with: state.accountTokenUsage)
         dailyChartView.update(with: state.tokenUsage)
         hourlyChartView.update(with: state.tokenUsage)
         quotaSummaryView.update(fiveHour: state.fiveHour, weekly: state.weekly)
@@ -38,13 +42,18 @@ final class TouchBarRateLimitsView: NSView {
         chatGPTIconView.translatesAutoresizingMaskIntoConstraints = false
         chatGPTIconView.toolTip = "ChatGPT"
 
-        let content = NSStackView(views: [
-            closeButton,
+        var contentViews: [NSView] = []
+        if showsCloseButton {
+            contentViews.append(closeButton)
+        }
+        contentViews.append(contentsOf: [
             chatGPTIconView,
+            accountDailyChartView,
             dailyChartView,
             hourlyChartView,
             quotaSummaryView
         ])
+        let content = NSStackView(views: contentViews)
         content.translatesAutoresizingMaskIntoConstraints = false
         content.orientation = .horizontal
         content.alignment = .centerY
@@ -52,23 +61,33 @@ final class TouchBarRateLimitsView: NSView {
 
         addSubview(content)
 
+        let segmentWidth: CGFloat = showsCloseButton ? 132.5 : 141.5
+
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: 620),
             heightAnchor.constraint(equalToConstant: 30),
-            closeButton.widthAnchor.constraint(equalToConstant: 30),
-            closeButton.heightAnchor.constraint(equalToConstant: 28),
             chatGPTIconView.widthAnchor.constraint(equalToConstant: 30),
             chatGPTIconView.heightAnchor.constraint(equalToConstant: 30),
-            dailyChartView.widthAnchor.constraint(equalToConstant: 178),
+            accountDailyChartView.widthAnchor.constraint(equalToConstant: segmentWidth),
+            accountDailyChartView.heightAnchor.constraint(equalToConstant: 30),
+            dailyChartView.widthAnchor.constraint(equalToConstant: segmentWidth),
             dailyChartView.heightAnchor.constraint(equalToConstant: 30),
-            hourlyChartView.widthAnchor.constraint(equalToConstant: 178),
+            hourlyChartView.widthAnchor.constraint(equalToConstant: segmentWidth),
             hourlyChartView.heightAnchor.constraint(equalToConstant: 30),
-            quotaSummaryView.widthAnchor.constraint(equalToConstant: 178),
+            quotaSummaryView.widthAnchor.constraint(equalToConstant: segmentWidth),
             quotaSummaryView.heightAnchor.constraint(equalToConstant: 27),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.centerXAnchor.constraint(equalTo: centerXAnchor),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
             content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             content.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+
+        if showsCloseButton {
+            NSLayoutConstraint.activate([
+                closeButton.widthAnchor.constraint(equalToConstant: 30),
+                closeButton.heightAnchor.constraint(equalToConstant: 28)
+            ])
+        }
     }
 
     private static func chatGPTIcon() -> NSImage {
@@ -80,6 +99,7 @@ final class TouchBarRateLimitsView: NSView {
 
 private final class TokenUsageChartView: NSView {
     enum Kind {
+        case accountThirtyDays
         case thirtyDays
         case todayHours
     }
@@ -87,10 +107,16 @@ private final class TokenUsageChartView: NSView {
     private let kind: Kind
     private var values: [Int]
     private var oneHourTokens = 0
+    private var yesterdayTokens = 0
 
     init(kind: Kind) {
         self.kind = kind
-        self.values = Array(repeating: 0, count: kind == .thirtyDays ? 30 : 24)
+        switch kind {
+        case .accountThirtyDays, .thirtyDays:
+            self.values = Array(repeating: 0, count: 30)
+        case .todayHours:
+            self.values = Array(repeating: 0, count: 24)
+        }
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
     }
@@ -106,11 +132,24 @@ private final class TokenUsageChartView: NSView {
     func update(with usage: TokenUsageSummary?) {
         oneHourTokens = usage?.oneHourTokens ?? 0
         switch kind {
+        case .accountThirtyDays:
+            break
         case .thirtyDays:
             values = normalized(usage?.dailyTokens, count: 30)
+            yesterdayTokens = usage?.yesterdayTokens ?? 0
         case .todayHours:
             values = normalized(usage?.hourlyTokens, count: 24)
         }
+        toolTip = makeToolTip()
+        needsDisplay = true
+    }
+
+    func update(with usage: AccountTokenUsage?) {
+        guard kind == .accountThirtyDays else {
+            return
+        }
+        values = normalized(usage?.dailyTokens, count: 30)
+        yesterdayTokens = values[28]
         toolTip = makeToolTip()
         needsDisplay = true
     }
@@ -125,10 +164,15 @@ private final class TokenUsageChartView: NSView {
         let color: NSColor
 
         switch kind {
+        case .accountThirtyDays:
+            highlightedIndex = 29
+            futureStartIndex = nil
+            caption = "账户30日 \(compactTokenText(values.reduce(0, +))) 昨\(compactTokenText(yesterdayTokens))"
+            color = .systemBlue
         case .thirtyDays:
             highlightedIndex = 29
             futureStartIndex = nil
-            caption = "近30日 \(compactTokenText(values.reduce(0, +)))"
+            caption = "本机30日 \(compactTokenText(values.reduce(0, +))) 昨\(compactTokenText(yesterdayTokens))"
             color = .systemTeal
         case .todayHours:
             highlightedIndex = currentHour
@@ -233,9 +277,14 @@ private final class TokenUsageChartView: NSView {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         let total = formatter.string(from: NSNumber(value: values.reduce(0, +))) ?? "0"
-        return kind == .thirtyDays
-            ? "近 30 日 \(total) tokens"
-            : "今日 \(total) tokens"
+        switch kind {
+        case .accountThirtyDays:
+            return "账户近 30 日 \(total) tokens"
+        case .thirtyDays:
+            return "本机近 30 日 \(total) tokens"
+        case .todayHours:
+            return "本机今日 \(total) tokens"
+        }
     }
 }
 
