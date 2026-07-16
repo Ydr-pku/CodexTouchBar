@@ -1,6 +1,12 @@
 import AppKit
 
 final class TouchBarRateLimitsView: NSView {
+    private enum Layout {
+        static let totalWidth: CGFloat = 620
+        static let iconWidth: CGFloat = 30
+        static let spacing: CGFloat = 6
+    }
+
     private let closeButton = NSButton()
     private let showsCloseButton: Bool
     private let chatGPTIconView = NSImageView()
@@ -57,16 +63,23 @@ final class TouchBarRateLimitsView: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         content.orientation = .horizontal
         content.alignment = .centerY
-        content.spacing = 6
+        content.spacing = Layout.spacing
 
         addSubview(content)
 
-        let segmentWidth: CGFloat = showsCloseButton ? 132.5 : 141.5
+        let spacingCount: CGFloat = showsCloseButton ? 5 : 4
+        let closeButtonWidth: CGFloat = showsCloseButton ? 30 : 0
+        let segmentWidth = (
+            Layout.totalWidth
+                - Layout.iconWidth
+                - closeButtonWidth
+                - spacingCount * Layout.spacing
+        ) / 4
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 620),
+            widthAnchor.constraint(equalToConstant: Layout.totalWidth),
             heightAnchor.constraint(equalToConstant: 30),
-            chatGPTIconView.widthAnchor.constraint(equalToConstant: 30),
+            chatGPTIconView.widthAnchor.constraint(equalToConstant: Layout.iconWidth),
             chatGPTIconView.heightAnchor.constraint(equalToConstant: 30),
             accountDailyChartView.widthAnchor.constraint(equalToConstant: segmentWidth),
             accountDailyChartView.heightAnchor.constraint(equalToConstant: 30),

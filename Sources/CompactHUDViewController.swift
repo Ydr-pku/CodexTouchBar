@@ -54,17 +54,14 @@ final class CompactHUDViewController: NSViewController, NSTouchBarDelegate {
         guard TouchBarPresentationEnvironment.hasActiveBuiltInDisplay else {
             return
         }
-        hudView.collapseDetails(animated: false)
         hudView.activateTouchBar()
     }
 
     func presentQuotaDetails() {
-        if TouchBarPresentationEnvironment.hasActiveBuiltInDisplay {
-            hudView.collapseDetails(animated: true)
-            hudView.activateTouchBar()
-        } else {
-            hudView.toggleDetails()
+        guard TouchBarPresentationEnvironment.hasActiveBuiltInDisplay else {
+            return
         }
+        hudView.activateTouchBar()
     }
 
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
@@ -114,7 +111,7 @@ private enum TouchBarPresentationEnvironment {
 final class CompactQuotaHUDView: NSView {
     private enum Layout {
         static let compactSize = NSSize(width: 134, height: 34)
-        static let expandedSize = NSSize(width: 620, height: 34)
+        static let expandedSize = NSSize(width: 700, height: 34)
     }
 
     private enum HorizontalExpansionAnchor {
@@ -144,6 +141,10 @@ final class CompactQuotaHUDView: NSView {
     private var mouseDownScreenLocation: NSPoint?
     private var windowOriginAtMouseDown: NSPoint?
     private var didDrag = false
+    private var hoverTrackingArea: NSTrackingArea?
+    private var hoverExitTimer: Timer?
+    private var hoverContainmentFrame: NSRect?
+    private var pointerIsInside = false
 
     init(initialAppearance: HUDAppearance, onRefresh: @escaping () -> Void, onQuit: @escaping () -> Void) {
         self.onRefresh = onRefresh
@@ -169,6 +170,46 @@ final class CompactQuotaHUDView: NSView {
 
     override func becomeFirstResponder() -> Bool {
         true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
+        if window == nil {
+            stopHoverExitMonitor()
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        pointerIsInside = true
+        startHoverExitMonitor()
+        expandForHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        pointerIsInside = true
+        startHoverExitMonitor()
+        expandForHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        handlePointerExit()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -207,6 +248,10 @@ final class CompactQuotaHUDView: NSView {
         }
         if didDrag {
             window.setFrameOrigin(NSPoint(x: startOrigin.x + deltaX, y: startOrigin.y + deltaY))
+            if var containmentFrame = hoverContainmentFrame {
+                containmentFrame.origin = window.frame.origin
+                hoverContainmentFrame = containmentFrame
+            }
         }
     }
 
@@ -217,6 +262,10 @@ final class CompactQuotaHUDView: NSView {
         mouseDownScreenLocation = nil
         windowOriginAtMouseDown = nil
         didDrag = false
+        if !pointerIsInside {
+            collapseDetails(animated: true)
+            stopHoverExitMonitor()
+        }
     }
 
     override func makeTouchBar() -> NSTouchBar? {
@@ -243,18 +292,11 @@ final class CompactQuotaHUDView: NSView {
         }
 
         expansionAnchor = preferredExpansionAnchor()
+        hoverContainmentFrame = targetWindowFrame(for: Layout.expandedSize)
         compactStack?.isHidden = true
         detailsView.isHidden = false
         widthConstraint?.constant = Layout.expandedSize.width
         resizeWindow(to: Layout.expandedSize, animated: true)
-    }
-
-    func toggleDetails() {
-        if detailsView.isHidden {
-            showDetails()
-        } else {
-            collapseDetails(animated: true)
-        }
     }
 
     func collapseDetails(animated: Bool) {
@@ -265,6 +307,7 @@ final class CompactQuotaHUDView: NSView {
         detailsView.isHidden = true
         compactStack?.isHidden = false
         widthConstraint?.constant = Layout.compactSize.width
+        hoverContainmentFrame = nil
         resizeWindow(to: Layout.compactSize, animated: animated)
     }
 
@@ -322,6 +365,26 @@ final class CompactQuotaHUDView: NSView {
             return
         }
 
+        guard let targetFrame = targetWindowFrame(for: size) else {
+            return
+        }
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(targetFrame, display: true)
+            }
+        } else {
+            window.setFrame(targetFrame, display: true)
+        }
+    }
+
+    private func targetWindowFrame(for size: NSSize) -> NSRect? {
+        guard let window else {
+            return nil
+        }
+
         let currentFrame = window.frame
         let targetX: CGFloat
         switch expansionAnchor {
@@ -332,21 +395,58 @@ final class CompactQuotaHUDView: NSView {
         case .right:
             targetX = currentFrame.maxX - size.width
         }
-        let targetFrame = NSRect(
+        return NSRect(
             x: targetX,
             y: currentFrame.maxY - size.height,
             width: size.width,
             height: size.height
         )
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                window.animator().setFrame(targetFrame, display: true)
-            }
-        } else {
-            window.setFrame(targetFrame, display: true)
+    }
+
+    private func expandForHover(at point: NSPoint) {
+        guard detailsView.isHidden else {
+            return
         }
+
+        let refreshPoint = refreshButton.convert(point, from: self)
+        let quitPoint = quitButton.convert(point, from: self)
+        if refreshButton.bounds.contains(refreshPoint) || quitButton.bounds.contains(quitPoint) {
+            return
+        }
+        showDetails()
+    }
+
+    private func startHoverExitMonitor() {
+        guard hoverExitTimer == nil else {
+            return
+        }
+
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+            guard let self, let window = self.window else {
+                self?.stopHoverExitMonitor()
+                return
+            }
+            let containmentFrame = self.hoverContainmentFrame ?? window.frame
+            if !containmentFrame.contains(NSEvent.mouseLocation) {
+                self.handlePointerExit()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverExitTimer = timer
+    }
+
+    private func stopHoverExitMonitor() {
+        hoverExitTimer?.invalidate()
+        hoverExitTimer = nil
+    }
+
+    private func handlePointerExit() {
+        pointerIsInside = false
+        guard mouseDownScreenLocation == nil else {
+            return
+        }
+        collapseDetails(animated: true)
+        stopHoverExitMonitor()
     }
 
     private func preferredExpansionAnchor() -> HorizontalExpansionAnchor {
